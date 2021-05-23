@@ -16,12 +16,7 @@
  */
 package xades4j.production;
 
-import xades4j.algorithms.Algorithm;
-import javax.inject.Inject;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.IdentityHashMap;
-import java.util.Map;
+import org.apache.xml.security.signature.Manifest;
 import org.apache.xml.security.signature.ObjectContainer;
 import org.apache.xml.security.signature.Reference;
 import org.apache.xml.security.signature.XMLSignature;
@@ -30,15 +25,22 @@ import org.apache.xml.security.transforms.Transforms;
 import org.apache.xml.security.utils.resolver.ResourceResolverSpi;
 import org.w3c.dom.Document;
 import xades4j.UnsupportedAlgorithmException;
+import xades4j.algorithms.Algorithm;
 import xades4j.properties.DataObjectDesc;
 import xades4j.providers.AlgorithmsProviderEx;
 import xades4j.utils.ResolverAnonymous;
 import xades4j.utils.TransformUtils;
 import xades4j.xml.marshalling.algorithms.AlgorithmsParametersMarshallingProvider;
 
+import javax.inject.Inject;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Map;
+
 /**
  * Helper class that processes a set of data object descriptions.
- * 
+ *
  * @author Luís
  */
 class SignedDataObjectsProcessor
@@ -57,21 +59,20 @@ class SignedDataObjectsProcessor
      * Processes the signed data objects and adds the corresponding {@code Reference}s
      * and {@code Object}s to the signature. This method must be invoked before
      * adding any other {@code Reference}s to the signature.
-     * 
+     *
      * @return the reference mappings resulting from the data object descriptions.
-     * 
-     * @throws UnsupportedAlgorithmException
-     * @throws IllegalStateException if the signature already contains {@code Reference}s
+     * @throws UnsupportedAlgorithmException if the reference digest algorithm is not supported
+     * @throws IllegalStateException         if the signature already contains {@code Reference}s
      */
     Map<DataObjectDesc, Reference> process(
             SignedDataObjects signedDataObjects,
             XMLSignature xmlSignature) throws UnsupportedAlgorithmException
     {
-        if(xmlSignature.getSignedInfo().getLength() != 0)
+        if (xmlSignature.getSignedInfo().getLength() != 0)
         {
-            throw new IllegalStateException("XMLSignature already contais references");
+            throw new IllegalStateException("XMLSignature already contains references");
         }
-        
+
         for (ResourceResolverSpi resolver : signedDataObjects.getResourceResolvers())
         {
             xmlSignature.addResourceResolver(resolver);
@@ -101,9 +102,8 @@ class SignedDataObjectsProcessor
                 }
                 else if (dataObjDesc instanceof EnvelopedXmlObject)
                 {
-                    // If the data object info is a EnvelopedXmlObject we need to create a
-                    // XMLObject to embed it. The Reference uri will refer the new
-                    // XMLObject's id.
+                    // If the data object info is a EnvelopedXmlObject we need to create a ds:Object to embed it.
+                    // The Reference uri will refer the new ds:Object's id.
                     EnvelopedXmlObject envXmlObj = (EnvelopedXmlObject) dataObjDesc;
                     refUri = String.format("%s-object%d", xmlSignature.getId(), xmlSignature.getObjectLength());
                     refType = Reference.OBJECT_URI;
@@ -130,9 +130,46 @@ class SignedDataObjectsProcessor
                     AnonymousDataObjectReference anonymousRef = (AnonymousDataObjectReference) dataObjDesc;
                     xmlSignature.addResourceResolver(new ResolverAnonymous(anonymousRef.getDataStream()));
                 }
+                else if (dataObjDesc instanceof EnvelopedManifest)
+                {
+                    // If the data object info is a EnvelopedManifest we need to create a ds:Manifest and a ds:Object
+                    // to embed it. The Reference uri will refer the manifest's id.
+                    EnvelopedManifest envManifest = (EnvelopedManifest) dataObjDesc;
+                    refUri = String.format("%s-manifest%d", xmlSignature.getId(), xmlSignature.getObjectLength());
+                    refType = Reference.MANIFEST_URI;
+
+                    Manifest manifest = new Manifest(xmlSignature.getDocument());
+                    manifest.setId(refUri);
+                    // TODO fail if empty
+                    // TODO fail if items have properties
+                    for (DataObjectReference dataObjInManifest : envManifest.getDataObjects())
+                    {
+                        manifest.addDocument(
+                                xmlSignature.getBaseURI(),
+                                dataObjInManifest.getUri(),
+                                null,
+                                digestMethodUri,
+                                null,
+                                null);
+                    }
+
+                    ObjectContainer xmlObj = new ObjectContainer(xmlSignature.getDocument());
+                    xmlObj.appendChild(manifest.getElement());
+                    xmlSignature.appendObject(xmlObj);
+
+                    // TODO manifest-specific resolvers?
+                    for (ResourceResolverSpi resolver : signedDataObjects.getResourceResolvers())
+                    {
+                        manifest.addResourceResolver(resolver);
+                    }
+                    // TODO this should be initialized later
+                    manifest.generateDigestValues();
+
+                    refUri = '#' + refUri;
+                }
                 else
                 {
-                    throw new ClassCastException("Unsupported SignedDataObjectDesc. Must be one of DataObjectReference, EnvelopedXmlObject and AnonymousDataObjectReference");
+                    throw new ClassCastException("Unsupported SignedDataObjectDesc. Must be one of DataObjectReference, EnvelopedXmlObject, EnvelopedManifest and AnonymousDataObjectReference");
                 }
 
                 // Add the Reference. References need an ID because data object
@@ -150,7 +187,8 @@ class SignedDataObjectsProcessor
                 referenceMappings.put(dataObjDesc, ref);
             }
 
-        } catch (XMLSignatureException ex)
+        }
+        catch (XMLSignatureException ex)
         {
             // -> xmlSignature.appendObject(xmlObj): not thrown when signing.
             // -> xmlSignature.addDocument(...): appears to be thrown when the digest
@@ -158,7 +196,8 @@ class SignedDataObjectsProcessor
             throw new UnsupportedAlgorithmException(
                     "Digest algorithm not supported in the XML Signature provider",
                     digestMethodUri, ex);
-        } catch (org.apache.xml.security.exceptions.XMLSecurityException ex)
+        }
+        catch (org.apache.xml.security.exceptions.XMLSecurityException ex)
         {
             // -> xmlSignature.getSignedInfo().item(...): shouldn't be thrown
             //      when signing.

@@ -16,9 +16,17 @@
  */
 package xades4j.production;
 
+import org.apache.xml.security.signature.Manifest;
+import org.apache.xml.security.signature.XMLSignatureInput;
+import org.apache.xml.security.utils.resolver.ResourceResolverContext;
+import org.apache.xml.security.utils.resolver.ResourceResolverException;
+import org.apache.xml.security.utils.resolver.ResourceResolverSpi;
+import org.w3c.dom.Element;
 import xades4j.algorithms.EnvelopedSignatureTransform;
 import org.apache.xml.security.utils.Constants;
+
 import java.util.Map;
+
 import org.apache.xml.security.signature.ObjectContainer;
 import org.apache.xml.security.signature.Reference;
 import org.apache.xml.security.signature.XMLSignature;
@@ -28,17 +36,16 @@ import org.w3c.dom.Document;
 import xades4j.properties.DataObjectDesc;
 import xades4j.utils.SignatureServicesTestBase;
 import xades4j.utils.StringUtils;
+
 import static org.junit.Assert.*;
 
 /**
- *
  * @author Luís
  */
 public class SignedDataObjectsProcessorTest extends SignatureServicesTestBase
 {
-
     @BeforeClass
-    public static void setUpClass() throws Exception
+    public static void setUpClass()
     {
         Init.initXMLSec();
     }
@@ -51,9 +58,9 @@ public class SignedDataObjectsProcessorTest extends SignatureServicesTestBase
         Document doc = getNewDocument();
 
         SignedDataObjects dataObjsDescs = new SignedDataObjects()
-            .withSignedDataObject(new DataObjectReference("uri").withTransform(new EnvelopedSignatureTransform()))
-            .withSignedDataObject(new EnvelopedXmlObject(doc.createElement("test1")))
-            .withSignedDataObject(new EnvelopedXmlObject(doc.createElement("test2"), "text/xml", null));
+                .withSignedDataObject(new DataObjectReference("uri").withTransform(new EnvelopedSignatureTransform()))
+                .withSignedDataObject(new EnvelopedXmlObject(doc.createElement("test1")))
+                .withSignedDataObject(new EnvelopedXmlObject(doc.createElement("test2"), "text/xml", null));
 
         XMLSignature xmlSignature = new XMLSignature(doc, "", XMLSignature.ALGO_ID_SIGNATURE_RSA_SHA256);
         xmlSignature.setId("sigId");
@@ -78,6 +85,55 @@ public class SignedDataObjectsProcessorTest extends SignatureServicesTestBase
     }
 
     @Test
+    public void testAddManifest() throws Exception
+    {
+        Document doc = getNewDocument();
+
+        SignedDataObjects signedObjects = new SignedDataObjects()
+                .withSignedDataObject(new EnvelopedManifest()
+                        .withSignedDataObject(new DataObjectReference("xades4j:1"))
+                        .withSignedDataObject(new DataObjectReference("xades4j:2")))
+                .withResourceResolver(new ResourceResolverSpi()
+                {
+                    @Override
+                    public XMLSignatureInput engineResolveURI(ResourceResolverContext context)
+                    {
+                        return new XMLSignatureInput(context.uriToResolve.getBytes());
+                    }
+
+                    @Override
+                    public boolean engineCanResolveURI(ResourceResolverContext context)
+                    {
+                        return context.uriToResolve.startsWith("xades4j:");
+                    }
+                });
+
+        XMLSignature xmlSignature = new XMLSignature(doc, "", XMLSignature.ALGO_ID_SIGNATURE_RSA_SHA256);
+        xmlSignature.setId("sigId");
+
+        AllwaysNullAlgsParamsMarshaller algsParamsMarshaller = new AllwaysNullAlgsParamsMarshaller();
+
+        SignedDataObjectsProcessor processor = new SignedDataObjectsProcessor(new TestAlgorithmsProvider(), algsParamsMarshaller);
+        Map<DataObjectDesc, Reference> result = processor.process(signedObjects, xmlSignature);
+
+        assertEquals(1, result.size());
+        assertEquals(1, xmlSignature.getObjectLength());
+        assertEquals(1, xmlSignature.getSignedInfo().getLength());
+
+        Manifest manifest = new Manifest((Element)xmlSignature.getObjectItem(0).getElement().getFirstChild(), "");
+        assertEquals(2, manifest.getLength());
+        assertNotNull(manifest.getId());
+
+        Reference ref1 = manifest.item(0);
+        assertEquals("xades4j:1", ref1.getURI());
+        assertNotEquals(0, ref1.getDigestValue());
+
+        Reference ref2 = manifest.item(1);
+        assertEquals("xades4j:2", ref2.getURI());
+        assertNotEquals(0, ref2.getDigestValue());
+    }
+
+    @Test
     public void testAddNullReference() throws Exception
     {
         System.out.println("addNullReference");
@@ -85,7 +141,7 @@ public class SignedDataObjectsProcessorTest extends SignatureServicesTestBase
         Document doc = SignatureServicesTestBase.getNewDocument();
 
         SignedDataObjects dataObjsDescs = new SignedDataObjects()
-            .withSignedDataObject(new AnonymousDataObjectReference("data".getBytes()));
+                .withSignedDataObject(new AnonymousDataObjectReference("data".getBytes()));
 
         XMLSignature xmlSignature = new XMLSignature(doc, "", XMLSignature.ALGO_ID_SIGNATURE_RSA_SHA256);
         xmlSignature.setId("sigId");
@@ -109,8 +165,8 @@ public class SignedDataObjectsProcessorTest extends SignatureServicesTestBase
         Document doc = SignatureServicesTestBase.getNewDocument();
 
         SignedDataObjects dataObjsDescs = new SignedDataObjects()
-            .withSignedDataObject(new AnonymousDataObjectReference("data1".getBytes()))
-            .withSignedDataObject(new AnonymousDataObjectReference("data2".getBytes()));
+                .withSignedDataObject(new AnonymousDataObjectReference("data1".getBytes()))
+                .withSignedDataObject(new AnonymousDataObjectReference("data2".getBytes()));
 
         XMLSignature xmlSignature = new XMLSignature(doc, "", XMLSignature.ALGO_ID_SIGNATURE_RSA_SHA256);
         xmlSignature.setId("sigId");

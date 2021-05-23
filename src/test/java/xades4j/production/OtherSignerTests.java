@@ -26,10 +26,10 @@ import xades4j.properties.DataObjectDesc;
 import org.junit.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+
 import static org.junit.Assert.*;
 
 /**
- *
  * @author Luís
  */
 public class OtherSignerTests extends SignerTestBase
@@ -55,6 +55,19 @@ public class OtherSignerTests extends SignerTestBase
     }
 
     @Test
+    public void testSignWithManifest() throws Exception
+    {
+        Document doc = getNewDocument();
+        XadesSigner signer = new XadesBesSigningProfile(keyingProviderMy).newSigner();
+
+        DataObjectDesc obj1 = new EnvelopedManifest()
+                .withSignedDataObject(new DataObjectReference("logo-01.png"));
+        signer.sign(new SignedDataObjects(obj1).withBaseUri("http://luisgoncalves.github.io/xades4j/images/"), doc);
+
+        outputDocument(doc, "document.signed.bes.manifest.xml");
+    }
+
+    @Test
     public void testSignUsingCustomResolver() throws Exception
     {
         System.out.println("signUsingCustomResolver");
@@ -72,7 +85,7 @@ public class OtherSignerTests extends SignerTestBase
         assertEquals(1, resolverSpi.resolveCount);
     }
 
-    class MyResolverSpi extends ResourceResolverSpi
+    static class MyResolverSpi extends ResourceResolverSpi
     {
         private int resolveCount = 0;
 
